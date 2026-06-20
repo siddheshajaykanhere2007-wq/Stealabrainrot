@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Brainrot Heist 3D - Moto G60 Edition</title>
+    <style>
+        body, html {
+            margin: 0; padding: 0; overflow: hidden;
+            width: 100%; height: 100%;
+            font-family: 'Arial Black', sans-serif;
+            background: #020105; user-select: none;
+            -webkit-user-select: none;
+        }
+        #canvas-container { width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 1; }
+        
+        /* ADJUSTED FOR MOTO G60 20.5:9 ASPECT RATIO */
+        .hud {
+            position: absolute; z-index: 10; pointer-events: none;
+            width: 100%; height: 100%; box-sizing: border-box; 
+            padding: 24px 16px; /* Added extra top padding for camera punch-hole */
+            display: flex; flex-direction: column; justify-content: space-between;
+        }
+        .top-hud { display: flex; justify-content: space-between; width: 100%; gap: 10px; }
+        .stat-box {
+            background: rgba(5,2,10,0.85); border: 2px solid #00ffcc;
+            padding: 8px 12px; border-radius: 8px; color: #fff;
+            font-size: 1.1rem; letter-spacing: 0.5px; text-shadow: 0 0 5px #00ffcc;
+            flex: 1; text-align: center;
+        }
+        #alert-status {
+            color: #00ff00; border-color: #00ff00; text-shadow: 0 0 5px #00ff00;
+        }
+        
+        /* COMFORTABLE TOUCH JOYSTICK POSITIONING */
+        #joystick-container {
+            position: absolute; bottom: 50px; left: 50px;
+            width: 110px; height: 110px; background: rgba(255,255,255,0.08);
+            border: 3px solid rgba(0, 255, 204, 0.4); border-radius: 50%;
+            z-index: 15; pointer-events: auto; touch-action: none;
+            display: flex; align-items: center; justify-content: center;
+        }
+        #joystick-knob {
+            width: 45px; height: 45px; background: linear-gradient(45deg, #00ffcc, #ff007f);
+            border-radius: 50%; box-shadow: 0 0 10px #00ffcc;
+        }
+
+        /* OUTCOME SCREEN overlay */
+        #win-screen {
+            position: absolute; width: 100%; height: 100%; z-index: 20;
+            background: rgba(5,2,15,0.95); display: none; flex-direction: column;
+            justify-content: center; align-items: center; color: #ff007f;
+            text-align: center; pointer-events: auto; padding: 20px; box-sizing: border-box;
+        }
+        h1 { font-size: 2.5rem; margin: 0; text-shadow: 0 0 15px #ff007f; text-transform: uppercase; }
+        .subtitle { color: #00ffcc; font-size: 1.2rem; margin-top: 10px; text-shadow: 0 0 8px #00ffcc; font-weight: bold; }
+        .btn {
+            background: #fff; color: #000; border: none; padding: 12px 35px;
+            font-size: 1.2rem; font-weight: bold; border-radius: 25px; margin-top: 25px;
+            cursor: pointer; box-shadow: 0 4px 15px rgba(255,255,255,0.3);
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+
+    <div class="hud">
+        <div class="top-hud">
+            <div class="stat-box" id="score-box">CACHE: 0%</div>
+            <div class="stat-box" id="alert-status">STEALTH: SIGMA</div>
+        </div>
+    </div>
+
+    <div id="joystick-container">
+        <div id="joystick-knob"></div>
+    </div>
+
+    <div id="win-screen">
+        <h1>OBJECTIVE STOLEN</h1>
+        <div class="subtitle">YOU SECURED THE BRAINROT MATRIX (+9999 AURA)</div>
+        <button class="btn" onclick="location.reload()">HEIST AGAIN</button>
+    </div>
+
+    <script>
+        let scene, camera, renderer, player;
+        let brainrotCore, securityDrone;
+        let joystick = { active: false, startX: 0, startY: 0, moveX: 0, moveY: 0 };
+        
+        let moveVector = new THREE.Vector3();
+        let heistSuccess = false;
+        let droneAngle = 0;
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x030108);
+            scene.fog = new THREE.FogExp2(0x030108, 0.045); // Atmospheric depth
+
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            
+            // Optimized renderer configs for Adreno 618 GPU stability
+            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Dynamic screen scaling caps
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            // Real-feel ambient and localized direction vectors
+            const ambient = new THREE.AmbientLight(0xffffff, 0.08);
+            scene.add(ambient);
+
+            const globalSun = new THREE.DirectionalLight(0x7f00ff, 0.85);
+            globalSun.position.set(5, 15, 5);
+            scene.add(globalSun);
+
+            createMapEnvironment();
+
+            // Spawn Player (Chrome reflections look brilliant on mobile)
+            player = new THREE.Group();
+            let bodyMesh = new THREE.Mesh(
+                new THREE.SphereGeometry(0.55, 24, 24),
+                new THREE.MeshStandardMaterial({ color: 0x2e2e2e, metalness: 0.95, roughness: 0.15 })
+            );
+            bodyMesh.position.y = 0.55;
+            player.add(bodyMesh);
+
+            let eyeMat = new THREE.MeshBasicMaterial({ color: 0x00ffcc });
+            let eyeL = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.15), eyeMat);
+            eyeL.position.set(-0.18, 0.7, 0.45);
+            let eyeR = eyeL.clone(); eyeR.position.x = 0.18;
+            player.add(eyeL); player.add(eyeR);
+            
+            player.position.set(0, 0, 14);
+            scene.add(player);
+
+            // Spawn Vault Objective
+            let coreGroup = new THREE.Group();
+            brainrotCore = new THREE.Mesh(
+                new THREE.OctahedronGeometry(0.7, 0),
+                new THREE.MeshStandardMaterial({ color: 0xff007f, emissive: 0xff007f, emissiveIntensity: 1.5, metalness: 0.4 })
+            );
+            brainrotCore.position.y = 1.1;
+            coreGroup.add(brainrotCore);
+
+            let pedestal = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.5, 0.7, 0.7, 12),
+                new THREE.MeshStandardMaterial({ color: 0x151522, metalness: 0.7, roughness: 0.3 })
+            );
+            pedestal.position.y = 0.35;
+            coreGroup.add(pedestal);
+
+            coreGroup.position.set(0, 0, -12);
+            scene.add(coreGroup);
+
+            // Guard Drone
+            securityDrone = new THREE.Group();
+            let dBody = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.35, 0.9), new THREE.MeshStandardMaterial({ color: 0x0f0511, metalness: 0.8 }));
+            let dEye = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 12), new THREE.MeshBasicMaterial({ color: 0xff0055 }));
+            dEye.position.z = 0.45;
+            securityDrone.add(dBody); securityDrone.add(dEye);
+            
+            let searchCone = new THREE.Mesh(
+                new THREE.ConeGeometry(2.5, 7, 12, 1, true),
+                new THREE.MeshBasicMaterial({ color: 0xff0055, transparent: true, opacity: 0.12, side: THREE.DoubleSide })
+            );
+            searchCone.rotation.x = -Math.PI / 2;
+            searchCone.position.z = 3.5;
+            securityDrone.add(searchCone);
+
+            securityDrone.position.set(0, 2.2, 0);
+            scene.add(securityDrone);
+
+            setupTouchControls();
+            animate();
+        }
+
+        function createMapEnvironment() {
+            // Reflective ground panels
+            const floor = new THREE.Mesh(
+                new THREE.PlaneGeometry(50, 50),
+                new THREE.MeshStandardMaterial({ color: 0x080410, roughness: 0.25, metalness: 0.75 })
+            );
+            floor.rotation.x = -Math.PI / 2;
+            scene.add(floor);
+
+            const grid = new THREE.GridHelper(50, 20, 0xff007f, 0x180a2c);
+            grid.position.y = 0.005;
+            scene.add(grid);
+
+            // Columns layout matrix
+            const colGeo = new THREE.BoxGeometry(2, 5, 2);
+            const colMat = new THREE.MeshStandardMaterial({ color: 0x0c0818, roughness: 0.3, metalness: 0.6 });
+            let spots = [[-5, -3], [5, -3], [-5, 5], [5, 5], [-10, -8], [10, -8]];
+
+            spots.forEach(pos => {
+                let col = new THREE.Mesh(colGeo, colMat);
+                col.position.set(pos[0], 2.5, pos[1]);
+                scene.add(col);
+            });
+        }
+
+        function setupTouchControls() {
+            const container = document.getElementById('joystick-container');
+            const knob = document.getElementById('joystick-knob');
+
+            container.addEventListener('touchstart', e => {
+                joystick.active = true;
+                const touch = e.touches[0];
+                joystick.startX = touch.clientX;
+                joystick.startY = touch.clientY;
+            }, { passive: true });
+
+            window.addEventListener('touchmove', e => {
+                if (!joystick.active) return;
+                const touch = e.touches[0];
+                let dx = touch.clientX - joystick.startX;
+                let dy = touch.clientY - joystick.startY;
+                
+                const boundRadius = 35;
+                const distance = Math.hypot(dx, dy);
+                if (distance > boundRadius) {
+                    dx = (dx / distance) * boundRadius;
+                    dy = (dy / distance) * boundRadius;
+                }
+
+                knob.style.transform = `translate(${dx}px, ${dy}px)`;
+                
+                joystick.moveX = dx / boundRadius;
+                joystick.moveY = dy / boundRadius;
+            }, { passive: true });
+
+            window.addEventListener('touchend', () => {
+                joystick.active = false;
+                knob.style.transform = 'translate(0px, 0px)';
+                joystick.moveX = 0; joystick.moveY = 0;
+            }, { passive: true });
+        }
+
+        function handleGameUpdate() {
+            if (heistSuccess) return;
+
+            moveVector.set(0, 0, 0);
+            if (joystick.active) {
+                moveVector.x = joystick.moveX;
+                moveVector.z = joystick.moveY;
+            }
+
+            // Smooth run velocities
+            const runSpeed = 0.14;
+            player.position.addScaledVector(moveVector, runSpeed);
+
+            if (moveVector.lengthSq() > 0) {
+                player.rotation.y = Math.atan2(moveVector.x, moveVector.z);
+            }
+
+            player.position.x = THREE.MathUtils.clamp(player.position.x, -24, 24);
+            player.position.z = THREE.MathUtils.clamp(player.position.z, -24, 24);
+
+            brainrotCore.rotation.y += 0.025;
+
+            // Security AI rotation logic
+            droneAngle += 0.018;
+            securityDrone.position.x = Math.sin(droneAngle) * 9;
+            securityDrone.rotation.y = droneAngle + Math.PI;
+
+            // Collision check
+            let flatPlayerPos = new THREE.Vector3(player.position.x, player.position.y, player.position.z);
+            let flatDronePos = new THREE.Vector3(securityDrone.position.x, player.position.y, securityDrone.position.z);
+            let distToDrone = flatPlayerPos.distanceTo(flatDronePos);
+            
+            const alertStatus = document.getElementById('alert-status');
+            if (distToDrone < 3.2) {
+                alertStatus.innerText = "CAUGHT BY SKIBIDI";
+                alertStatus.style.color = "#ff0055"; alertStatus.style.borderColor = "#ff0055";
+            } else {
+                alertStatus.innerText = "STEALTH: SIGMA";
+                alertStatus.style.color = "#00ffcc"; alertStatus.style.borderColor = "#00ffcc";
+            }
+
+            // Score tracking computations
+            let distToCore = player.position.distanceTo(new THREE.Vector3(0, player.position.y, -12));
+            let progress = Math.max(0, Math.min(100, Math.round((1 - (distToCore - 1) / 25) * 100)));
+            document.getElementById('score-box').innerText = `HEIST: ${progress}%`;
+
+            if (distToCore < 1.3) {
+                heistSuccess = true;
+                document.getElementById('win-screen').style.display = 'flex';
+            }
+
+            // Ideal 3rd Person Mobile Cam Follow interpolation
+            camera.position.x += (player.position.x - camera.position.x) * 0.08;
+            camera.position.z += ((player.position.z + 6.5) - camera.position.z) * 0.08;
+            camera.position.y += ((player.position.y + 4.0) - camera.position.y) * 0.08;
+            camera.lookAt(player.position.x, player.position.y + 0.4, player.position.z);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            handleGameUpdate();
+            renderer.render(scene, camera);
+        }
+
+        window.onload = init;
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
